@@ -200,22 +200,42 @@ def setupFpgaMac(args):
         setupDone = True
 
 
-def processPackets(packetID, packetLen, packetBytes, args):
+def processPackets(packetLen, packetBytes, args):
     global executionTimeInMilliseconds
     #start_time = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
     start_time = time.perf_counter()
     if zedBoard:
         if setupDone == False:
             #Make setup
+            print("Make setup")
             setupFpgaMac(args)
-        processPacketsOnCoprocessor(packetID, packetLen, packetBytes, args)
+            x = threading.Thread(target=readFPGAResponse, args=(args,))
+            x.start()
+
+        processPacketsOnCoprocessor(packetLen, packetBytes, args)
     else:
-        processPacketsProcessor(packetID, packetLen, packetBytes, args)
+        processPacketsProcessor(packetLen, packetBytes, args)
     #stop_time = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
     stop_time = time.perf_counter()
     #executionTimeInMilliseconds += (stop_time - start_time)/1000000
-    executionTimeInMilliseconds += (stop_time - start_time) * 1000
+    executionTimeInMilliseconds += (stop_time - start_time) # * 1000
     
+
+def readFPGAResponse(args):
+    nrPackets = 0
+
+    while nrPackets < 100:
+
+        packetStatus = int.from_bytes(args.fpgaOut.read(4), byteorder='little', signed=True)
+        if packetStatus == 1:
+            #Error
+            print("Not interesting")
+        if packetStatus == 2:
+            print("Att packet")
+
+        if packetStatus == 0:
+            print("Advertising")
+        nrPackets += 1
 
 
 def printPacketHex(packetLen, packetBytes):
@@ -224,7 +244,7 @@ def printPacketHex(packetLen, packetBytes):
     print("")
 
 
-def processPacketsProcessor(packetID, packetLen, packetBytes, args):
+def processPacketsProcessor(packetLen, packetBytes, args):
 
     # Mac in args.macAddressList
     #printPacketHex(packetLen, packetBytes)
@@ -237,24 +257,29 @@ def processPacketsProcessor(packetID, packetLen, packetBytes, args):
             packetBytes[11] == args.macAddressList[0]:
             
             # Do stuff with it
-            printPacketHex(packetLen, packetBytes)
+            #printPacketHex(packetLen, packetBytes)
             print("Matching")
     return
 
-def processPacketsOnCoprocessor(packetID, packetLen, packetBytes, args):
 
-    args.fpgaIn.write(bytearray([0x01, 0x00,0x00,0x00] + packetBytes[4:12]))
+def processPacketsOnCoprocessor(packetLen, packetBytes, args):
 
-    returnedPacketId = int.from_bytes(args.fpgaOut.read(4), byteorder='little', signed=True)
-    packetStatus = int.from_bytes(args.fpgaOut.read(4), byteorder='little', signed=True)
-    if packetStatus == 1:
+
+    localList = []
+    for i in range(4,12):
+        localList.append(packetBytes[i])
+    args.fpgaIn.write(bytearray(localList))
+
+    #packetStatus = int.from_bytes(args.fpgaOut.read(4), byteorder='little', signed=True)
+    
+    #if packetStatus == 1:
         #Error
-        print("Not interesting")
-    if packetStatus == 2:
-        print("Att packet")
+    #    print("Not interesting")
+    #if packetStatus == 2:
+    #    print("Att packet")
 
-    if packetStatus == 0:
-        print("Advertising")
+    #if packetStatus == 0:
+    #    print("Advertising")
 
     # Mac in args.macAddressList
 
@@ -341,7 +366,7 @@ def main():
         #loggerFile = configureLogFile(args)
 
 
-        print("Processing time %s ms" % executionTimeInMilliseconds)       
+        print("Processing time %s seconds" % executionTimeInMilliseconds)       
         #print(vars(args))
     except IOError:
         input("Could not open file! Please close Excel. Press Enter to retry.")
