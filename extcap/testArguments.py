@@ -45,6 +45,7 @@ snifferParser.add_argument('-detect', action='store_true', help='Detect new near
 #snifferParser.add_argument('-detectFile', action='store', help='File from keeping track of new devices. \
 #                            detectedDevs.log will be used as default.', default="detectedDevs.log")
 snifferParser.add_argument('--FPGA', action='store_true', help="Run the filters on the programmable logic.")
+snifferParser.add_argument('--threaded', action='store_true', help="Run the filters on the programmable logic.")
 
 snifferParser.add_argument('-v', action='version', help='Show program version and exit.')
 
@@ -210,8 +211,9 @@ def processPackets(packetLen, packetBytes, args):
             #Make setup
             #print("Make setup")
             setupFpgaMac(args)
-            #x = threading.Thread(target=readFPGAResponse, args=(args,))
-            #x.start()
+            if args.threaded == True:
+                x = threading.Thread(target=readFPGAResponse, args=(args,))
+                x.start()
 
         processPacketsOnCoprocessor(packetLen, packetBytes, args)
     else:
@@ -261,7 +263,8 @@ def processPacketsProcessor(packetLen, packetBytes, args):
             
             # Do stuff with it
             #printPacketHex(packetLen, packetBytes)
-            print("Matching")
+            #print("Matching")
+            return
     return
 
 
@@ -273,7 +276,8 @@ def processPacketsOnCoprocessor(packetLen, packetBytes, args):
         localList.append(packetBytes[i])
     args.fpgaIn.write(bytearray(localList))
 
-    packetStatus = int.from_bytes(args.fpgaOut.read(4), byteorder='little', signed=True)
+    if args.threaded == False:
+        packetStatus = int.from_bytes(args.fpgaOut.read(4), byteorder='little', signed=True)
     
     #if packetStatus == 1:
         #Error
