@@ -32,7 +32,7 @@ snifferParser.add_argument('-logFile', action='store', help='Custom log file for
 snifferParser.add_argument('-captureFile', action='store', help='Capture file to save packets in online mode. Default is capture_<date>.sniff')
 
 snifferParser.add_argument('-mac', action='store', help='Bluetooth MAC addres to filter packets by.')
-snifferParser.add_argument('-offline', action='store_true')
+snifferParser.add_argument('-offline', action='store_true', help="Filter all packets in a given capture, needs a mac address and an input file.")
 snifferParser.add_argument('-inFile', action='store', help='Capture file load packets in offline mode. This file must be a .sniff file')
 #Offline mode will display on the screen and into some random file
 
@@ -43,6 +43,7 @@ snifferParser.add_argument('-out', action='store', help='Used for storing output
 snifferParser.add_argument('-detect', action='store_true', help='Detect new nearby devices.')
 #snifferParser.add_argument('-detectFile', action='store', help='File from keeping track of new devices. \
 #                            detectedDevs.log will be used as default.', default="detectedDevs.log")
+snifferParser.add_argument('--FPGA', action='store_true', help="Run the filters on the programmable logic.")
 
 snifferParser.add_argument('-v', action='version', help='Show program version and exit.')
 
@@ -112,6 +113,9 @@ def parseArguments(args) -> OperatingMode:
     # Detect new nearby devices
     # Store packets into file, specify number of packets to store, default 200?
 
+    global zedBoard
+    zedBoard = args.FPGA
+
     if args.offline:
         if verifyMacAddress(args):
             if verifyFileExists(args.inFile):
@@ -129,7 +133,7 @@ def parseArguments(args) -> OperatingMode:
     if args.detect == True:
         return OperatingMode.Detect
 
-    return None
+    return OperatingMode.Online
     
 
 def setup():
@@ -185,22 +189,18 @@ def selectDeviceForFollowing():
 def setupFpgaMac(args):
     
     # Mac in args.macAddressList 
-
     #newFileBytes = [0x01, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x03]
-    # make file
-    newFile = open("/dev/xillybus_write_32", "wb",buffering=0)
-    file2 =  open("/dev/xillybus_read_32", "rb")
-    # write to file
-    print(newFile)
-    print(file2)
-    newFileByteArray = bytearray([0x00, 0x00,0x00,0x00] + args.macAddressList + [0, 0])
-    print(newFile.write(newFileByteArray))
+    args.fpgaIn = open("/dev/xillybus_write_32", "wb",buffering=0)
+    args.fpgaOut = open("/dev/xillybus_read_32", "rb")
+    newFileByteArray = bytearray([0x00, 0x00,0x00,0x00] + args.macAddressList + [0, 0]) # Packet id + mac + padding
+    args.fpgaIn.write(newFileByteArray)
 
-    print(int.from_bytes(file2.read(4), byteorder='little', signed=True)) #This should be 0
-    print(int.from_bytes(file2.read(4), byteorder='little', signed=True)) #This should be 0
+    if (int.from_bytes(args.fpgaOut.read(8), byteorder='little', signed=True)) == 0:
+        global setupDone
+        setupDone = True
 
 
-def processPackets(packetLen, packetBytes, args):
+def processPackets(packetID, packetLen, packetBytes, args):
     global executionTimeInMilliseconds
     #start_time = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
     start_time = time.perf_counter()
@@ -208,9 +208,9 @@ def processPackets(packetLen, packetBytes, args):
         if setupDone == False:
             #Make setup
             setupFpgaMac(args)
-        processPacketsOnCoprocessor(packetLen, packetBytes, args)
+        processPacketsOnCoprocessor(packetID, packetLen, packetBytes, args)
     else:
-        processPacketsProcessor(packetLen, packetBytes, args)
+        processPacketsProcessor(packetID, packetLen, packetBytes, args)
     #stop_time = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
     stop_time = time.perf_counter()
     #executionTimeInMilliseconds += (stop_time - start_time)/1000000
@@ -224,8 +224,7 @@ def printPacketHex(packetLen, packetBytes):
     print("")
 
 
-def processPacketsProcessor(packetLen, packetBytes, args):
-
+def processPacketsProcessor(packetID, packetLen, packetBytes, args):
 
     # Mac in args.macAddressList
     #printPacketHex(packetLen, packetBytes)
@@ -242,7 +241,20 @@ def processPacketsProcessor(packetLen, packetBytes, args):
             print("Matching")
     return
 
-def processPacketsOnCoprocessor(packetLen, packetBytes, args):
+def processPacketsOnCoprocessor(packetID, packetLen, packetBytes, args):
+
+    args.fpgaIn.write(bytearray([0x01, 0x00,0x00,0x00] + packetBytes[4:12]))
+
+    returnedPacketId = int.from_bytes(args.fpgaOut.read(4), byteorder='little', signed=True)
+    packetStatus = int.from_bytes(args.fpgaOut.read(4), byteorder='little', signed=True)
+    if packetStatus == 1:
+        #Error
+        print("Not interesting")
+    if packetStatus == 2:
+        print("Att packet")
+
+    if packetStatus == 0:
+        print("Advertising")
 
     # Mac in args.macAddressList
 
@@ -279,6 +291,12 @@ def processOfflinePackets(args):
         # Send to processing (packetLen, bytes)
         processedPackets += 1
     args.offlinePacketsFile.close()
+
+    global zedBoard
+    if zedBoard == True:
+        args.fpgaIn.close()
+        args.fpgaOut.close()
+
     print("Processed %d packets." % processedPackets)
     return
 
@@ -289,33 +307,33 @@ def main():
 
     #Interpret arguments, then switch for according usage
 
-    testVar = parseArguments(args)
+    selectedOperatingMode = parseArguments(args)
 
-    if type(testVar) == OperatingMode:
-        if testVar == OperatingMode.Online: #Operating mode
+
+    if type(selectedOperatingMode) == OperatingMode:
+        if selectedOperatingMode == OperatingMode.Online: #Operating mode
 
             
-
             print("Online mode!")
 
-        if testVar == OperatingMode.Offline: #Operating mode
+        if selectedOperatingMode == OperatingMode.Offline: #Operating mode
 
             #Mac will be in args.macAddressList
 
             processOfflinePackets(args)
 
             print("Offline mode!")
-        if testVar == OperatingMode.Store: #Operating mode
+        if selectedOperatingMode == OperatingMode.Store: #Operating mode
             print("Store mode!")
             setup()
             # Store in args.out
             loopStore(args)
-        if testVar == OperatingMode.Detect: #Operating mode
+        if selectedOperatingMode == OperatingMode.Detect: #Operating mode
 
 
             print("Detect mode!")
     else:
-        print("Error")
+        print("Fatal error!")
 
     #if configureLogFile(args) != None:
     

@@ -67,7 +67,7 @@ def create_packet(packet: bytes, timestamp_seconds: float):
         bytes: a PCAP formatted packet.
     """
     timestamp_floor = int(timestamp_seconds)
-    timestamp_offset_us = int((timestamp_seconds - timestamp_floor) * 1_000_000)
+    timestamp_offset_us = int((timestamp_seconds - timestamp_floor) * 1000000)
 
     return struct.pack("<LLLL",
                        timestamp_floor,
