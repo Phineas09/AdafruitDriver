@@ -3,6 +3,7 @@ import re
 import os
 import enum
 import time
+import threading
 from datetime import datetime
 
 
@@ -72,7 +73,7 @@ def verifyMacAddress(args):
             splitMacAddress = args.mac.split(':')
             for _ in splitMacAddress:
                 args.macAddressList.append(int(_, 16))
-            print(args.macAddressList)
+            #print(args.macAddressList)
             return True
     print("You must specify a valid MAC Address using \'-mac!\'")
     return False
@@ -195,7 +196,7 @@ def setupFpgaMac(args):
     newFileByteArray = bytearray([0x00, 0x00,0x00,0x00] + args.macAddressList + [0, 0]) # Packet id + mac + padding
     args.fpgaIn.write(newFileByteArray)
 
-    if (int.from_bytes(args.fpgaOut.read(8), byteorder='little', signed=True)) == 0:
+    if (int.from_bytes(args.fpgaOut.read(4), byteorder='little', signed=True)) == 0:
         global setupDone
         setupDone = True
 
@@ -207,10 +208,10 @@ def processPackets(packetLen, packetBytes, args):
     if zedBoard:
         if setupDone == False:
             #Make setup
-            print("Make setup")
+            #print("Make setup")
             setupFpgaMac(args)
-            x = threading.Thread(target=readFPGAResponse, args=(args,))
-            x.start()
+            #x = threading.Thread(target=readFPGAResponse, args=(args,))
+            #x.start()
 
         processPacketsOnCoprocessor(packetLen, packetBytes, args)
     else:
@@ -224,18 +225,20 @@ def processPackets(packetLen, packetBytes, args):
 def readFPGAResponse(args):
     nrPackets = 0
 
-    while nrPackets < 100:
+    while nrPackets < args.n:
 
         packetStatus = int.from_bytes(args.fpgaOut.read(4), byteorder='little', signed=True)
-        if packetStatus == 1:
+        #if packetStatus == 1:
             #Error
-            print("Not interesting")
-        if packetStatus == 2:
-            print("Att packet")
+        #    print("Not interesting")
+        #if packetStatus == 2:
+        #    print("Att packet")
 
-        if packetStatus == 0:
-            print("Advertising")
+        #if packetStatus == 0:
+        #    print("Advertising")
+        
         nrPackets += 1
+    args.fpgaOut.close()
 
 
 def printPacketHex(packetLen, packetBytes):
@@ -270,7 +273,7 @@ def processPacketsOnCoprocessor(packetLen, packetBytes, args):
         localList.append(packetBytes[i])
     args.fpgaIn.write(bytearray(localList))
 
-    #packetStatus = int.from_bytes(args.fpgaOut.read(4), byteorder='little', signed=True)
+    packetStatus = int.from_bytes(args.fpgaOut.read(4), byteorder='little', signed=True)
     
     #if packetStatus == 1:
         #Error
@@ -320,7 +323,7 @@ def processOfflinePackets(args):
     global zedBoard
     if zedBoard == True:
         args.fpgaIn.close()
-        args.fpgaOut.close()
+        #args.fpgaOut.close()
 
     print("Processed %d packets." % processedPackets)
     return
@@ -338,7 +341,7 @@ def main():
     if type(selectedOperatingMode) == OperatingMode:
         if selectedOperatingMode == OperatingMode.Online: #Operating mode
 
-            
+            pass
             print("Online mode!")
 
         if selectedOperatingMode == OperatingMode.Offline: #Operating mode
@@ -347,9 +350,9 @@ def main():
 
             processOfflinePackets(args)
 
-            print("Offline mode!")
+            #print("Offline mode!")
         if selectedOperatingMode == OperatingMode.Store: #Operating mode
-            print("Store mode!")
+            #print("Store mode!")
             setup()
             # Store in args.out
             loopStore(args)
