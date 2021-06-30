@@ -11,6 +11,11 @@ from SnifferAPI import Sniffer, UART
 nPackets = 0
 mySniffer = None
 
+zedBoard = False
+setupDone = False
+
+executionTimeInMilliseconds = 0
+
 ## Macros for usage mode
 
 class OperatingMode(enum.Enum):
@@ -62,6 +67,11 @@ def configureLogFile(args):
 def verifyMacAddress(args):
     if args.mac != None:
         if re.match("[0-9a-f]{2}([-:]?)[0-9a-f]{2}(\\1[0-9a-f]{2}){4}$", args.mac.lower()):
+            args.macAddressList = [] 
+            splitMacAddress = args.mac.split(':')
+            for _ in splitMacAddress:
+                args.macAddressList.append(int(_, 16))
+            print(args.macAddressList)
             return True
     print("You must specify a valid MAC Address using \'-mac!\'")
     return False
@@ -140,7 +150,7 @@ def storePackets(packets, args):
             for _ in range(packetLen, roundedLen):
                 payload.append(0)
             payload.insert(0, roundedLen)
-            print(roundedLen)
+            #print(roundedLen)
             args.storeFile.write(bytearray(payload))
             global nPackets
             nPackets += 1
@@ -171,15 +181,70 @@ def selectDeviceForFollowing():
 
     mySniffer.follow(d)
 
-def processPacketsProcessor(packetLen, packetBytes):
 
+def setupFpgaMac(args):
+    
+    # Mac in args.macAddressList 
+
+    #newFileBytes = [0x01, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x03]
+    # make file
+    newFile = open("/dev/xillybus_write_32", "wb",buffering=0)
+    file2 =  open("/dev/xillybus_read_32", "rb")
+    # write to file
+    print(newFile)
+    print(file2)
+    newFileByteArray = bytearray([0x00, 0x00,0x00,0x00] + args.macAddressList + [0, 0])
+    print(newFile.write(newFileByteArray))
+
+    print(int.from_bytes(file2.read(4), byteorder='little', signed=True)) #This should be 0
+    print(int.from_bytes(file2.read(4), byteorder='little', signed=True)) #This should be 0
+
+
+def processPackets(packetLen, packetBytes, args):
+    global executionTimeInMilliseconds
+    #start_time = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
+    start_time = time.perf_counter()
+    if zedBoard:
+        if setupDone == False:
+            #Make setup
+            setupFpgaMac(args)
+        processPacketsOnCoprocessor(packetLen, packetBytes, args)
+    else:
+        processPacketsProcessor(packetLen, packetBytes, args)
+    #stop_time = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
+    stop_time = time.perf_counter()
+    #executionTimeInMilliseconds += (stop_time - start_time)/1000000
+    executionTimeInMilliseconds += (stop_time - start_time) * 1000
+    
+
+
+def printPacketHex(packetLen, packetBytes):
     for i in range(0, packetLen):
         print("%02x " % packetBytes[i], end="")
     print("")
 
+
+def processPacketsProcessor(packetLen, packetBytes, args):
+
+
+    # Mac in args.macAddressList
+    #printPacketHex(packetLen, packetBytes)
+    if packetLen > 12:
+        if packetBytes[6] == args.macAddressList[5] and \
+            packetBytes[7] == args.macAddressList[4] and \
+            packetBytes[8] == args.macAddressList[3] and \
+            packetBytes[9] == args.macAddressList[2] and \
+            packetBytes[10] == args.macAddressList[1] and \
+            packetBytes[11] == args.macAddressList[0]:
+            
+            # Do stuff with it
+            printPacketHex(packetLen, packetBytes)
+            print("Matching")
     return
 
-def processPacketsOnCoprocessor(packetLen, packetBytes):
+def processPacketsOnCoprocessor(packetLen, packetBytes, args):
+
+    # Mac in args.macAddressList
 
     '''
     newFileBytes = [0x01, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x03]
@@ -196,32 +261,31 @@ def processPacketsOnCoprocessor(packetLen, packetBytes):
     print(int.from_bytes(file2.read(4), byteorder='little', signed=True))
 
     '''
-    pass
+    return
 
 #args.inFile
 def processOfflinePackets(args):
 
     args.offlinePacketsFile = open(args.inFile, "rb")
     packetLen = int.from_bytes(args.offlinePacketsFile.read(1), "little")
-
+    processedPackets = 0
     while packetLen != 0:
         packetBytes = args.offlinePacketsFile.read(packetLen)
 
-        print(packetBytes)
-        
-        processPacketsProcessor(packetLen, packetBytes)
+        #print(packetBytes)
+        processPackets(packetLen, packetBytes, args)
 
         packetLen = int.from_bytes(args.offlinePacketsFile.read(1), "little")
         # Send to processing (packetLen, bytes)
-
-
+        processedPackets += 1
     args.offlinePacketsFile.close()
-    
+    print("Processed %d packets." % processedPackets)
     return
 
 
 def main():
     args = snifferParser.parse_args()
+    global executionTimeInMilliseconds
 
     #Interpret arguments, then switch for according usage
 
@@ -230,9 +294,13 @@ def main():
     if type(testVar) == OperatingMode:
         if testVar == OperatingMode.Online: #Operating mode
 
+            
+
             print("Online mode!")
 
         if testVar == OperatingMode.Offline: #Operating mode
+
+            #Mac will be in args.macAddressList
 
             processOfflinePackets(args)
 
@@ -255,8 +323,8 @@ def main():
         #loggerFile = configureLogFile(args)
 
 
-                
-        print(vars(args))
+        print("Processing time %s ms" % executionTimeInMilliseconds)       
+        #print(vars(args))
     except IOError:
         input("Could not open file! Please close Excel. Press Enter to retry.")
         # restart the loop
