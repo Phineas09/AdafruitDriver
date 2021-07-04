@@ -7,6 +7,10 @@ import threading
 from datetime import datetime
 
 
+# Example of usages
+# sudo python3 testArguments.py -offline -mac d9:be:75:1d:26:a8 -inFile ./utils/test100.sniff -logFile ./logFiles/test.log
+
+
 from SnifferAPI import Sniffer, UART
 
 nPackets = 0
@@ -47,8 +51,6 @@ snifferParser.add_argument('-n', action='store', type=int, help='Number of packe
 snifferParser.add_argument('-out', action='store', help='Used for storing output of -store and -offline functions.') 
 
 snifferParser.add_argument('-detect', action='store_true', help='Detect new nearby devices.')
-#snifferParser.add_argument('-detectFile', action='store', help='File from keeping track of new devices. \
-#                            detectedDevs.log will be used as default.', default="detectedDevs.log")
 
 snifferParser.add_argument('--FPGA', action='store_true', help="Run the filters on the programmable logic.")
 snifferParser.add_argument('--threaded', action='store_true', help="Run the filters on the programmable logic.")
@@ -59,7 +61,7 @@ snifferParser.add_argument('-v', action='version', help='Show program version an
 def configureLogFile(args):
     try:
         if args.logFile == None:
-            args.logFile=("./logFiles/log_" + datetime.now().strftime("%Y%m%d" + ".log")
+            args.logFile=("./logFiles/log_" + datetime.now().strftime("%Y%m%d" + ".log"))
 
         if os.path.exists(args.logFile):
             append_write = 'a' # append if already exists
@@ -71,9 +73,11 @@ def configureLogFile(args):
     except Exception:
         return None
 
+
 def logMessage(loggerFile, message):
     message = datetime.now().strftime("%H:%M:%S:%d/%m/%Y ") + message + "\n"
     loggerFile.write(message)
+    loggerFile.flush()
 
 
 
@@ -148,19 +152,153 @@ def parseArguments(args) -> OperatingMode:
             return OperatingMode.Store
         else:
             print("You must provide an output file using \'-out\'!")
+
+
     if args.detect == True:
+        
+        # Have a statis file to read the devices from, if exists open in append, else
+        # create it and read all of it's contents
+        # scan every 15 seconds an notify if there is a new device
+
         return OperatingMode.Detect
+
+    #Meaning we are in OnlineMode
+
+    if args.captureFile != None:
+        args.captureFile = args.captureFile + ".sniff"
+    else:
+        args.captureFile = ("./out/onlineFiltering_" + datetime.now().strftime("%Y%m%d:%H:%M:%S") + ".sniff")
+    
+    args.out = args.captureFile
+    args.storeFile = open(args.captureFile, "wb")    
+
+    # Maybe see something about the mac address?
 
     return OperatingMode.Online
     
 
-def setup():
+def setup(args):
     global mySniffer
     mySniffer = Sniffer.Sniffer("/dev/ttyUSB0")
     mySniffer.setAdvHopSequence([37, 38, 39])
     mySniffer.start()
+    logMessage(args.loggerFile, "Initializing device /dev/ttyUSB0")
+    print("Scanning for BLE devices (5s) ...")
+    logMessage(args.loggerFile, "Scanning for BLE devices (5s) ...")
     time.sleep(5)
 
+
+def selectDevice(devlist, args):
+    count = 0
+
+    if len(devlist):
+        print("Found {0} BLE devices:\n".format(str(len(devlist))))
+        logMessage(args.loggerFile, "Found %d BLE devices!" % len(devlist))
+
+        # Display a list of devices, sorting them by index number
+        for d in devlist.asList():
+            """@type : Device"""
+            count += 1
+            print("  [{0}] {1} ({2}:{3}:{4}:{5}:{6}:{7}, RSSI = {8})".format(count, d.name,
+                                                                             "%02X" % d.address[0],
+                                                                             "%02X" % d.address[1],
+                                                                             "%02X" % d.address[2],
+                                                                             "%02X" % d.address[3],
+                                                                             "%02X" % d.address[4],
+                                                                             "%02X" % d.address[5],
+                                                                             d.RSSI))
+        try:
+            i = int(input("\nSelect a device to sniff, or '0' to scan again\n> "))
+        except KeyboardInterrupt:
+            print("\nProgram stopped!")
+
+            exit(1)
+            #raise KeyboardInterrupt
+            return None
+        except:
+            return None
+
+        # Select a device or scan again, depending on the input
+        if (i > 0) and (i <= count):
+            # Select the indicated device
+            return devlist.find(i - 1)
+        else:
+            # This will start a new scan
+            return None
+
+def scanForDevices(scantime=5):
+    global mySniffer
+    mySniffer.scan()
+    time.sleep(scantime)
+    devs = mySniffer.getDevices()
+    return devs
+
+def selectDeviceForFollowing(args):
+    d = None
+
+    while d is None:
+        devlist = scanForDevices()
+        if len(devlist):
+            # Select a device
+            d = selectDevice(devlist, args)
+        #print(devlist)
+    
+    # Get device mac addres to follow and setup 
+
+    # Here we need to configure args.macAddressList
+    
+    args.mac = "{0}:{1}:{2}:{3}:{4}:{5}".format("%02X" % d.address[0],
+                                                "%02X" % d.address[1],
+                                                "%02X" % d.address[2],
+                                                "%02X" % d.address[3],
+                                                "%02X" % d.address[4],
+                                                "%02X" % d.address[5])
+    verifyMacAddress(args)
+    logMessage(args.loggerFile, "Selected device %s" % args.mac )
+
+    logMessage(args.loggerFile, "Started following %s" % args.mac)
+
+    mySniffer.follow(d)
+
+
+def processOnlinePackets(packets, args):
+    global packetList
+    global nPackets
+    global zedBoard
+    for packet in packets:
+        if packet.blePacket != None:
+
+            payload = packet.blePacket.getPayload()
+            packetLen = len(payload)
+
+            payloadByteArray = bytearray(payload)
+            if zedBoard and args.threaded:
+                packetList.append(payloadByteArray)
+        
+            processPackets(packetLen, payloadByteArray, args)
+            
+            nPackets += 1
+            if nPackets >= args.n:
+                return
+                
+
+def loopOnlineFilter(args):
+    global nPackets
+    global mySniffer
+    global numberOfStoredPackets
+
+    print(args.mac)
+    print(args.macAddressList)
+    try:
+        while True:
+            time.sleep(0.1)
+            packets = mySniffer.getPackets()
+            processOnlinePackets(packets, args)
+    except:   
+        time.sleep(0.1)
+        print("Captured %d packets and stored %d" % (nPackets, numberOfStoredPackets))
+        logMessage(args.loggerFile, "Captured %d packets and stored %d" % (nPackets, numberOfStoredPackets))
+        args.storeFile.close()
 
 # Takes list of packets
 def storePackets(packets, args):
@@ -182,33 +320,21 @@ def storePackets(packets, args):
 def storePacket(payload, args):
     packetLen = len(payload)
     args.storeFile.write(bytearray([packetLen]))
-    print(packetLen, payload)
+    #print(packetLen, payload)
     args.storeFile.write(payload)
-    logMessage(args.loggerFile, "Stored matching packet in " + args.out)
+    logMessage(args.loggerFile, "Stored matching packet in \"" + args.out + "\"")
 
 
 def loopStore(args):
     global nPackets
+    global mySniffer
     while nPackets < args.n:
         time.sleep(0.1)
         packets = mySniffer.getPackets()
         storePackets(packets, args) #Function to store the packets
+    logMessage(args.loggerFile, "Stored %d packets!" % args.n)
     args.storeFile.close()
 
-
-
-def selectDeviceForFollowing():
-    d = None
-
-    while d is None:
-        print("Scanning for BLE devices (5s) ...")
-        devlist = scanForDevices()
-        if len(devlist):
-            # Select a device
-            d = selectDevice(devlist)
-        print(devlist)
-
-    mySniffer.follow(d)
 
 
 def setupFpgaMac(args):
@@ -249,26 +375,28 @@ def processPackets(packetLen, packetBytes, args):
     
 
 def readFPGAResponse(args):
+    try:
+        nrPackets = 0
+        global packetList
+        global numberOfStoredPackets
 
-    nrPackets = 0
-    global packetList
-    global numberOfStoredPackets
+        while nrPackets < args.n:
 
-    while nrPackets < args.n:
+            packetStatus = int.from_bytes(args.fpgaOut.read(4), byteorder='little', signed=True)
 
-        packetStatus = int.from_bytes(args.fpgaOut.read(4), byteorder='little', signed=True)
+            #if packetStatus == 1:
+                #Error
 
-        #if packetStatus == 1:
-            #Error
+            if packetStatus == 2 or packetStatus == 0:
+                storePacket(packetList.pop(0), args)
+                numberOfStoredPackets += 1
 
-        if packetStatus == 2 or packetStatus == 0:
-            storePacket(packetList.pop(0), args)
-            numberOfStoredPackets += 1
-
-        nrPackets += 1
-    print("Am filtrat ", end="")
-    print(nrPackets) # Remove 
-    args.fpgaOut.close()
+            nrPackets += 1
+        print("Am filtrat ", end="")
+        print(nrPackets) # Remove 
+    finally:
+        args.fpgaOut.close()
+        return
     return
 
 
@@ -306,24 +434,17 @@ def processPacketsProcessor(packetLen, packetBytes, args):
 
 def processPacketsOnCoprocessor(packetLen, packetBytes, args):
 
-
     localList = []
+    global numberOfStoredPackets
     for i in range(4,12):
         localList.append(packetBytes[i])
     args.fpgaIn.write(bytearray(localList))
     if args.threaded == False:
         packetStatus = int.from_bytes(args.fpgaOut.read(4), byteorder='little', signed=True)
-
-
-        #if packetStatus == 1:
-            #Error
-        #    print("Not interesting")
-        #if packetStatus == 2:
-        #    print("Att packet")
-
-        #if packetStatus == 0:
-        #    print("Advertising")
-    # Mac in args.macAddressList
+        
+        if packetStatus == 2 or packetStatus == 0:
+            storePacket(packetBytes, args)
+            numberOfStoredPackets += 1
 
     '''
     newFileBytes = [0x01, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x03]
@@ -348,6 +469,7 @@ def processOfflinePackets(args):
     args.offlinePacketsFile = open(args.inFile, "rb")
     packetLen = int.from_bytes(args.offlinePacketsFile.read(1), "little")
     global packetList
+    global zedBoard
     processedPackets = 0
     while packetLen != 0:
 
@@ -355,7 +477,9 @@ def processOfflinePackets(args):
             time.sleep(0.05)   
 
         packetBytes = args.offlinePacketsFile.read(packetLen)
-        packetList.append(packetBytes)
+
+        if zedBoard and args.threaded:
+            packetList.append(packetBytes)
 
         processPackets(packetLen, packetBytes, args)
 
@@ -365,7 +489,7 @@ def processOfflinePackets(args):
 
     args.offlinePacketsFile.close()
 
-    global zedBoard
+
     if zedBoard == True:
         args.fpgaIn.close()
         if args.threaded == False:
@@ -373,15 +497,14 @@ def processOfflinePackets(args):
 
     global numberOfStoredPackets
 
-
-    print("Processed %d packets." % processedPackets)
-    print(numberOfStoredPackets)
+    logMessage(args.loggerFile, "Processed %d packets and stored %d." % (processedPackets, numberOfStoredPackets))
     return
 
 
 def main():
     args = snifferParser.parse_args()
     global executionTimeInSeconds
+    global readingThread
 
     #Interpret arguments, then switch for according usage
 
@@ -391,51 +514,56 @@ def main():
     if type(selectedOperatingMode) == OperatingMode:
         if selectedOperatingMode == OperatingMode.Online: #Operating mode
 
-            pass
-            logMessage(args.loggerFile, "Program opened in online mode")
-            print("Online mode!")
+            try:
+                logMessage(args.loggerFile, "Program opened in online mode")
+                setup(args)
+                selectDeviceForFollowing(args)
+
+                loopOnlineFilter(args)
+
+            except KeyboardInterrupt:
+
+                if args.threaded == True:
+                    readingThread.raise_exception()
+                    readingThread.join()
+
 
         if selectedOperatingMode == OperatingMode.Offline: #Operating mode
 
             #Mac will be in args.macAddressList
 
-            logMessage(args.loggerFile, "Program opened in offline mode")
+            logMessage(args.loggerFile, "Program opened in offline mode filter for (%s)" % args.mac)
 
             processOfflinePackets(args)
 
-
             if args.threaded == True:
-                global readingThread
                 readingThread.join()
 
             args.storeFile.close()
-            #print("Offline mode!")
-        if selectedOperatingMode == OperatingMode.Store: #Operating mode
-            logMessage(args.loggerFile, "Program opened in store mode")
+            args.loggerFile.close()
 
-            #print("Store mode!")
-            setup()
-            # Store in args.out
+        if selectedOperatingMode == OperatingMode.Store: #Operating mode
+            logMessage(args.loggerFile, "Program opened in store mode in file \"%s\"" % args.out)
+            setup(args)
             loopStore(args)
+            args.loggerFile.close()
 
         if selectedOperatingMode == OperatingMode.Detect: #Operating mode
 
             logMessage(args.loggerFile, "Program opened in detection mode")
-
+    
             print("Detect mode!")
     else:
         print("Fatal error!")
 
-    #if configureLogFile(args) != None:
-    
     try:
-        #loggerFile = configureLogFile(args)
-
         print("Processing time %s seconds" % executionTimeInSeconds) 
 
     except IOError:
-        input("Could not open file! Please close Excel. Press Enter to retry.")
-
+        input("Could not open file!")
+    except Exception:
+        print("Something went wrong, aborting!")
+        exit(0)
 
 if __name__ == "__main__":
     main()
