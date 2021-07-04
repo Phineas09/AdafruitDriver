@@ -12,6 +12,8 @@ from SnifferAPI import Sniffer, UART
 nPackets = 0
 mySniffer = None
 
+readinThread = None
+
 zedBoard = False
 setupDone = False
 
@@ -212,8 +214,9 @@ def processPackets(packetLen, packetBytes, args):
             #print("Make setup")
             setupFpgaMac(args)
             if args.threaded == True:
-                x = threading.Thread(target=readFPGAResponse, args=(args,))
-                x.start()
+                global readinThread
+                readinThread = threading.Thread(target=readFPGAResponse, args=(args,))
+                readinThread.start()
 
         processPacketsOnCoprocessor(packetLen, packetBytes, args)
     else:
@@ -241,6 +244,7 @@ def readFPGAResponse(args):
         
         nrPackets += 1
     args.fpgaOut.close()
+    return
 
 
 def printPacketHex(packetLen, packetBytes):
@@ -314,6 +318,10 @@ def processOfflinePackets(args):
     packetLen = int.from_bytes(args.offlinePacketsFile.read(1), "little")
     processedPackets = 0
     while packetLen != 0:
+
+        if (processedPackets % 200) == 0:
+            time.sleep(1)
+
         packetBytes = args.offlinePacketsFile.read(packetLen)
 
         #print(packetBytes)
@@ -373,7 +381,13 @@ def main():
         #loggerFile = configureLogFile(args)
 
 
-        print("Processing time %s seconds" % executionTimeInMilliseconds)       
+        print("Processing time %s seconds" % executionTimeInMilliseconds) 
+
+        if args.threaded == True:
+            global readinThread
+            readinThread.join()
+
+
         #print(vars(args))
     except IOError:
         input("Could not open file! Please close Excel. Press Enter to retry.")
