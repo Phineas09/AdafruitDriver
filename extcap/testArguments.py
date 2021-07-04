@@ -59,7 +59,7 @@ snifferParser.add_argument('-v', action='version', help='Show program version an
 def configureLogFile(args):
     try:
         if args.logFile == None:
-            args.logFile=("./logFiles/log_" + datetime.now().strftime("%Y%m%d"))
+            args.logFile=("./logFiles/log_" + datetime.now().strftime("%Y%m%d" + ".log")
 
         if os.path.exists(args.logFile):
             append_write = 'a' # append if already exists
@@ -70,6 +70,11 @@ def configureLogFile(args):
         return loggerFile
     except Exception:
         return None
+
+def logMessage(loggerFile, message):
+    message = datetime.now().strftime("%H:%M:%S:%d/%m/%Y ") + message + "\n"
+    loggerFile.write(message)
+
 
 
 def verifyMacAddress(args):
@@ -121,6 +126,8 @@ def parseArguments(args) -> OperatingMode:
 
     global zedBoard
     zedBoard = args.FPGA
+
+    args.loggerFile = configureLogFile(args)
 
     if args.offline:
         if verifyMacAddress(args):
@@ -177,6 +184,7 @@ def storePacket(payload, args):
     args.storeFile.write(bytearray([packetLen]))
     print(packetLen, payload)
     args.storeFile.write(payload)
+    logMessage(args.loggerFile, "Stored matching packet in " + args.out)
 
 
 def loopStore(args):
@@ -244,6 +252,8 @@ def readFPGAResponse(args):
 
     nrPackets = 0
     global packetList
+    global numberOfStoredPackets
+
     while nrPackets < args.n:
 
         packetStatus = int.from_bytes(args.fpgaOut.read(4), byteorder='little', signed=True)
@@ -253,10 +263,11 @@ def readFPGAResponse(args):
 
         if packetStatus == 2 or packetStatus == 0:
             storePacket(packetList.pop(0), args)
+            numberOfStoredPackets += 1
 
         nrPackets += 1
     print("Am filtrat ", end="")
-    print(nrPackets)
+    print(nrPackets) # Remove 
     args.fpgaOut.close()
     return
 
@@ -381,21 +392,26 @@ def main():
         if selectedOperatingMode == OperatingMode.Online: #Operating mode
 
             pass
+            logMessage(args.loggerFile, "Program opened in online mode")
             print("Online mode!")
 
         if selectedOperatingMode == OperatingMode.Offline: #Operating mode
 
             #Mac will be in args.macAddressList
 
+            logMessage(args.loggerFile, "Program opened in offline mode")
+
             processOfflinePackets(args)
+
 
             if args.threaded == True:
                 global readingThread
                 readingThread.join()
 
-            args.storeFile.write.close()
+            args.storeFile.close()
             #print("Offline mode!")
         if selectedOperatingMode == OperatingMode.Store: #Operating mode
+            logMessage(args.loggerFile, "Program opened in store mode")
 
             #print("Store mode!")
             setup()
@@ -404,6 +420,7 @@ def main():
 
         if selectedOperatingMode == OperatingMode.Detect: #Operating mode
 
+            logMessage(args.loggerFile, "Program opened in detection mode")
 
             print("Detect mode!")
     else:
