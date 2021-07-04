@@ -12,12 +12,15 @@ from SnifferAPI import Sniffer, UART
 nPackets = 0
 mySniffer = None
 
-readinThread = None
+readingThread = None
+numberOfStoredPackets = 0
 
 zedBoard = False
 setupDone = False
 
-executionTimeInMilliseconds = 0
+executionTimeInSeconds = 0
+
+packetList = []
 
 ## Macros for usage mode
 
@@ -41,11 +44,12 @@ snifferParser.add_argument('-inFile', action='store', help='Capture file load pa
 
 snifferParser.add_argument('-store', action='store_true', help='Store all detected packets in given file.')
 snifferParser.add_argument('-n', action='store', type=int, help='Number of packets to store, default 200.', default=200)
-snifferParser.add_argument('-out', action='store', help='Used for storing output of -store function.') 
+snifferParser.add_argument('-out', action='store', help='Used for storing output of -store and -offline functions.') 
 
 snifferParser.add_argument('-detect', action='store_true', help='Detect new nearby devices.')
 #snifferParser.add_argument('-detectFile', action='store', help='File from keeping track of new devices. \
 #                            detectedDevs.log will be used as default.', default="detectedDevs.log")
+
 snifferParser.add_argument('--FPGA', action='store_true', help="Run the filters on the programmable logic.")
 snifferParser.add_argument('--threaded', action='store_true', help="Run the filters on the programmable logic.")
 
@@ -68,7 +72,6 @@ def configureLogFile(args):
         return None
 
 
-
 def verifyMacAddress(args):
     if args.mac != None:
         if re.match("[0-9a-f]{2}([-:]?)[0-9a-f]{2}(\\1[0-9a-f]{2}){4}$", args.mac.lower()):
@@ -80,7 +83,6 @@ def verifyMacAddress(args):
             return True
     print("You must specify a valid MAC Address using \'-mac!\'")
     return False
-
 
 
 def verifyFileExists(fileName, option = "\'-inFile\'"):
@@ -123,6 +125,11 @@ def parseArguments(args) -> OperatingMode:
     if args.offline:
         if verifyMacAddress(args):
             if verifyFileExists(args.inFile):
+                if args.out != None:
+                    args.out = args.out + ".sniff"
+                else:
+                    args.out = ("./out/offlineFiltering_" + datetime.now().strftime("%Y%m%d:%H:%M:%S") + ".sniff")
+                args.storeFile = open(args.out, "wb")
                 # We have all we need
                 return OperatingMode.Offline
     
@@ -165,6 +172,12 @@ def storePackets(packets, args):
             if nPackets >= args.n:
                 return
 
+def storePacket(payload, args):
+    packetLen = len(payload)
+    args.storeFile.write(bytearray([packetLen]))
+    print(packetLen, payload)
+    args.storeFile.write(payload)
+
 
 def loopStore(args):
     global nPackets
@@ -194,8 +207,8 @@ def setupFpgaMac(args):
     
     # Mac in args.macAddressList 
     #newFileBytes = [0x01, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x03]
-    args.fpgaIn = open("/dev/xillybus_write_32", "wb",buffering=0)
-    args.fpgaOut = open("/dev/xillybus_read_32", "rb")
+    args.fpgaIn = open("/dev/xillybus_write_32", "wb", buffering=0)
+    args.fpgaOut = open("/dev/xillybus_read_32", "rb", buffering=0)
     newFileByteArray = bytearray([0x00, 0x00,0x00,0x00] + args.macAddressList + [0, 0]) # Packet id + mac + padding
     args.fpgaIn.write(newFileByteArray)
 
@@ -205,7 +218,7 @@ def setupFpgaMac(args):
 
 
 def processPackets(packetLen, packetBytes, args):
-    global executionTimeInMilliseconds
+    global executionTimeInSeconds
     #start_time = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
     start_time = time.perf_counter()
     if zedBoard:
@@ -214,35 +227,36 @@ def processPackets(packetLen, packetBytes, args):
             #print("Make setup")
             setupFpgaMac(args)
             if args.threaded == True:
-                global readinThread
-                readinThread = threading.Thread(target=readFPGAResponse, args=(args,))
-                readinThread.start()
+                global readingThread
+                readingThread = threading.Thread(target=readFPGAResponse, args=(args,))
+                readingThread.start()
 
         processPacketsOnCoprocessor(packetLen, packetBytes, args)
     else:
         processPacketsProcessor(packetLen, packetBytes, args)
     #stop_time = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
     stop_time = time.perf_counter()
-    #executionTimeInMilliseconds += (stop_time - start_time)/1000000
-    executionTimeInMilliseconds += (stop_time - start_time) # * 1000
+    #executionTimeInSeconds += (stop_time - start_time)/1000000
+    executionTimeInSeconds += (stop_time - start_time) # * 1000
     
 
 def readFPGAResponse(args):
-    nrPackets = 0
 
+    nrPackets = 0
+    global packetList
     while nrPackets < args.n:
 
         packetStatus = int.from_bytes(args.fpgaOut.read(4), byteorder='little', signed=True)
+
         #if packetStatus == 1:
             #Error
-        #    print("Not interesting")
-        #if packetStatus == 2:
-        #    print("Att packet")
 
-        #if packetStatus == 0:
-        #    print("Advertising")
-        
+        if packetStatus == 2 or packetStatus == 0:
+            storePacket(packetList.pop(0), args)
+
         nrPackets += 1
+    print("Am filtrat ", end="")
+    print(nrPackets)
     args.fpgaOut.close()
     return
 
@@ -256,6 +270,7 @@ def printPacketHex(packetLen, packetBytes):
 def processPacketsProcessor(packetLen, packetBytes, args):
 
     # Mac in args.macAddressList
+    global numberOfStoredPackets
     #printPacketHex(packetLen, packetBytes)
     if packetLen > 12:
         if packetBytes[6] == args.macAddressList[5] and \
@@ -265,11 +280,17 @@ def processPacketsProcessor(packetLen, packetBytes, args):
             packetBytes[10] == args.macAddressList[1] and \
             packetBytes[11] == args.macAddressList[0]:
             
+            numberOfStoredPackets += 1
+            storePacket(packetBytes, args)
             # Do stuff with it
             #printPacketHex(packetLen, packetBytes)
             #print("Matching")
+
+            #print them to args.storeFile // Here
+
             return
     return
+
 
 
 def processPacketsOnCoprocessor(packetLen, packetBytes, args):
@@ -279,19 +300,18 @@ def processPacketsOnCoprocessor(packetLen, packetBytes, args):
     for i in range(4,12):
         localList.append(packetBytes[i])
     args.fpgaIn.write(bytearray(localList))
-
     if args.threaded == False:
         packetStatus = int.from_bytes(args.fpgaOut.read(4), byteorder='little', signed=True)
-    
-    #if packetStatus == 1:
-        #Error
-    #    print("Not interesting")
-    #if packetStatus == 2:
-    #    print("Att packet")
 
-    #if packetStatus == 0:
-    #    print("Advertising")
 
+        #if packetStatus == 1:
+            #Error
+        #    print("Not interesting")
+        #if packetStatus == 2:
+        #    print("Att packet")
+
+        #if packetStatus == 0:
+        #    print("Advertising")
     # Mac in args.macAddressList
 
     '''
@@ -316,34 +336,41 @@ def processOfflinePackets(args):
 
     args.offlinePacketsFile = open(args.inFile, "rb")
     packetLen = int.from_bytes(args.offlinePacketsFile.read(1), "little")
+    global packetList
     processedPackets = 0
     while packetLen != 0:
 
-        if (processedPackets % 200) == 0:
-            time.sleep(1)
+        if (processedPackets % 128) == 0:
+            time.sleep(0.05)   
 
         packetBytes = args.offlinePacketsFile.read(packetLen)
+        packetList.append(packetBytes)
 
-        #print(packetBytes)
         processPackets(packetLen, packetBytes, args)
 
         packetLen = int.from_bytes(args.offlinePacketsFile.read(1), "little")
         # Send to processing (packetLen, bytes)
         processedPackets += 1
+
     args.offlinePacketsFile.close()
 
     global zedBoard
     if zedBoard == True:
         args.fpgaIn.close()
-        #args.fpgaOut.close()
+        if args.threaded == False:
+            args.fpgaOut.close()
+
+    global numberOfStoredPackets
+
 
     print("Processed %d packets." % processedPackets)
+    print(numberOfStoredPackets)
     return
 
 
 def main():
     args = snifferParser.parse_args()
-    global executionTimeInMilliseconds
+    global executionTimeInSeconds
 
     #Interpret arguments, then switch for according usage
 
@@ -362,12 +389,19 @@ def main():
 
             processOfflinePackets(args)
 
+            if args.threaded == True:
+                global readingThread
+                readingThread.join()
+
+            args.storeFile.write.close()
             #print("Offline mode!")
         if selectedOperatingMode == OperatingMode.Store: #Operating mode
+
             #print("Store mode!")
             setup()
             # Store in args.out
             loopStore(args)
+
         if selectedOperatingMode == OperatingMode.Detect: #Operating mode
 
 
@@ -380,18 +414,10 @@ def main():
     try:
         #loggerFile = configureLogFile(args)
 
+        print("Processing time %s seconds" % executionTimeInSeconds) 
 
-        print("Processing time %s seconds" % executionTimeInMilliseconds) 
-
-        if args.threaded == True:
-            global readinThread
-            readinThread.join()
-
-
-        #print(vars(args))
     except IOError:
         input("Could not open file! Please close Excel. Press Enter to retry.")
-        # restart the loop
 
 
 if __name__ == "__main__":

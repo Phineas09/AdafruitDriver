@@ -17,3 +17,4 @@ python3 testArguments.py -offline -mac d9:be:75:1d:26:a8 -inFile ./utils/test100
 python3 testArguments.py -offline -mac d9:be:75:1d:26:a8 -inFile ./utils/test200.sniff -n 200 --FPGA --threaded
 python3 testArguments.py -offline -mac d9:be:75:1d:26:a8 -inFile ./utils/test400.sniff -n 400 --FPGA --threaded
 python3 testArguments.py -offline -mac d9:be:75:1d:26:a8 -inFile ./utils/test800.sniff -n 800 --FPGA --threaded
+
