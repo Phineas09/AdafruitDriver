@@ -51,6 +51,8 @@ snifferParser.add_argument('-n', action='store', type=int, help='Number of packe
 snifferParser.add_argument('-out', action='store', help='Used for storing output of -store and -offline functions.') 
 
 snifferParser.add_argument('-detect', action='store_true', help='Detect new nearby devices.')
+snifferParser.add_argument('-whiteList', action='store', help='Provided whitelist for detection of unknown devices.')
+
 
 snifferParser.add_argument('--FPGA', action='store_true', help="Run the filters on the programmable logic.")
 snifferParser.add_argument('--threaded', action='store_true', help="Run the filters on the programmable logic.")
@@ -160,6 +162,15 @@ def parseArguments(args) -> OperatingMode:
         # create it and read all of it's contents
         # scan every 15 seconds an notify if there is a new device
 
+
+        if args.whiteList == None:
+            print("You must provide a whitelist file.")
+            return None
+        else:
+            if os.path.exists(args.whiteList):
+                #Open file and read it's contents, else error
+                
+        
         return OperatingMode.Detect
 
     #Meaning we are in OnlineMode
@@ -275,7 +286,7 @@ def processOnlinePackets(packets, args):
             if zedBoard and args.threaded:
                 packetList.append(payloadByteArray)
         
-            processPackets(packetLen, payloadByteArray, args)
+            processPackets(packetLen, payloadByteArray, args, True)
             
             nPackets += 1
             if nPackets >= args.n:
@@ -287,8 +298,8 @@ def loopOnlineFilter(args):
     global mySniffer
     global numberOfStoredPackets
 
-    print(args.mac)
-    print(args.macAddressList)
+    #print(args.mac)
+    #print(args.macAddressList)
     try:
         while True:
             time.sleep(0.1)
@@ -325,6 +336,7 @@ def storePacket(payload, args):
     logMessage(args.loggerFile, "Stored matching packet in \"" + args.out + "\"")
 
 
+
 def loopStore(args):
     global nPackets
     global mySniffer
@@ -351,7 +363,7 @@ def setupFpgaMac(args):
         setupDone = True
 
 
-def processPackets(packetLen, packetBytes, args):
+def processPackets(packetLen, packetBytes, args, online = False):
     global executionTimeInSeconds
     #start_time = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
     start_time = time.perf_counter()
@@ -362,7 +374,7 @@ def processPackets(packetLen, packetBytes, args):
             setupFpgaMac(args)
             if args.threaded == True:
                 global readingThread
-                readingThread = threading.Thread(target=readFPGAResponse, args=(args,))
+                readingThread = threading.Thread(target=readFPGAResponse, args=(args,online))
                 readingThread.start()
 
         processPacketsOnCoprocessor(packetLen, packetBytes, args)
@@ -374,26 +386,44 @@ def processPackets(packetLen, packetBytes, args):
     executionTimeInSeconds += (stop_time - start_time) # * 1000
     
 
-def readFPGAResponse(args):
+def readFPGAResponse(args, online=False):
     try:
         nrPackets = 0
         global packetList
         global numberOfStoredPackets
 
-        while nrPackets < args.n:
+        if online == False:
+            while nrPackets < args.n:
 
-            packetStatus = int.from_bytes(args.fpgaOut.read(4), byteorder='little', signed=True)
+                packetStatus = int.from_bytes(args.fpgaOut.read(4), byteorder='little', signed=True)
 
-            #if packetStatus == 1:
-                #Error
+                #if packetStatus == 1:
+                    #Error
 
-            if packetStatus == 2 or packetStatus == 0:
-                storePacket(packetList.pop(0), args)
-                numberOfStoredPackets += 1
+                if packetStatus == 2 or packetStatus == 0:
+                    print("Packet Stored")
+                    storePacket(packetList.pop(0), args)
+                    numberOfStoredPackets += 1
+                    if packetStatus == 2:
+                        print("Captured ATT packet %d" % nrPackets)
 
-            nrPackets += 1
-        print("Am filtrat ", end="")
-        print(nrPackets) # Remove 
+                nrPackets += 1
+        else:
+            while True:
+
+                packetStatus = int.from_bytes(args.fpgaOut.read(4), byteorder='little', signed=True)
+
+                #if packetStatus == 1:
+                    #Error
+
+                if packetStatus == 2 or packetStatus == 0:
+                    print("Packet Stored")
+                    storePacket(packetList.pop(0), args)
+                    numberOfStoredPackets += 1
+
+                nrPackets += 1
+        print("Filtered %d packets " % nrPackets, end="")
+        #print(nrPackets) # Remove 
     finally:
         args.fpgaOut.close()
         return
@@ -421,15 +451,10 @@ def processPacketsProcessor(packetLen, packetBytes, args):
             
             numberOfStoredPackets += 1
             storePacket(packetBytes, args)
-            # Do stuff with it
-            #printPacketHex(packetLen, packetBytes)
-            #print("Matching")
 
-            #print them to args.storeFile // Here
 
             return
     return
-
 
 
 def processPacketsOnCoprocessor(packetLen, packetBytes, args):
@@ -551,7 +576,8 @@ def main():
         if selectedOperatingMode == OperatingMode.Detect: #Operating mode
 
             logMessage(args.loggerFile, "Program opened in detection mode")
-    
+
+            
             print("Detect mode!")
     else:
         print("Fatal error!")
