@@ -51,7 +51,7 @@ snifferParser.add_argument('-n', action='store', type=int, help='Number of packe
 snifferParser.add_argument('-out', action='store', help='Used for storing output of -store and -offline functions.') 
 
 snifferParser.add_argument('-detect', action='store_true', help='Detect new nearby devices.')
-snifferParser.add_argument('-whiteList', action='store', help='Provided whitelist for detection of unknown devices.')
+snifferParser.add_argument('-whiteList', action='store', help='Provided whitelist for detection of unknown devices. List must be Device-<MAC ADDRESS>')
 
 
 snifferParser.add_argument('--FPGA', action='store_true', help="Run the filters on the programmable logic.")
@@ -164,12 +164,20 @@ def parseArguments(args) -> OperatingMode:
 
 
         if args.whiteList == None:
-            print("You must provide a whitelist file.")
-            return None
+            args.whiteList = "knownDevices"         
+
+        if os.path.exists(args.whiteList):
+            with open(args.whiteList) as f:
+                content = f.readlines()
+            content = [x.strip() for x in content]
+            args.knownDevices = {}  
+            for _ in content:
+                key = _.split("-")[1]
+                if key not in args.knownDevices:
+                    args.knownDevices[key] = 1
         else:
-            if os.path.exists(args.whiteList):
+            return None
                 #Open file and read it's contents, else error
-                
         
         return OperatingMode.Detect
 
@@ -323,6 +331,8 @@ def storePackets(packets, args):
             payload.insert(0, roundedLen)
             #print(roundedLen)
             args.storeFile.write(bytearray(payload))
+            print("Stored packet from: {0}:{1}:{2}:{3}:{4}:{5}".format("%02X" % payload[11],"%02X" % payload[10],"%02X" % payload[9],"%02X" % payload[8],"%02X" % payload[7],
+            "%02X" % payload[6]))
             global nPackets
             nPackets += 1
             if nPackets >= args.n:
@@ -331,7 +341,6 @@ def storePackets(packets, args):
 def storePacket(payload, args):
     packetLen = len(payload)
     args.storeFile.write(bytearray([packetLen]))
-    #print(packetLen, payload)
     args.storeFile.write(payload)
     logMessage(args.loggerFile, "Stored matching packet in \"" + args.out + "\"")
 
@@ -348,14 +357,13 @@ def loopStore(args):
     args.storeFile.close()
 
 
-
 def setupFpgaMac(args):
     
     # Mac in args.macAddressList 
     #newFileBytes = [0x01, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x03]
     args.fpgaIn = open("/dev/xillybus_write_32", "wb", buffering=0)
     args.fpgaOut = open("/dev/xillybus_read_32", "rb", buffering=0)
-    newFileByteArray = bytearray([0x00, 0x00,0x00,0x00] + args.macAddressList + [0, 0]) # Packet id + mac + padding
+    newFileByteArray = bytearray([0x00, 0x00,0x00,0x00] + args.macAddressList + [0, 0]) 
     args.fpgaIn.write(newFileByteArray)
 
     if (int.from_bytes(args.fpgaOut.read(4), byteorder='little', signed=True)) == 0:
@@ -375,6 +383,7 @@ def processPackets(packetLen, packetBytes, args, online = False):
             if args.threaded == True:
                 global readingThread
                 readingThread = threading.Thread(target=readFPGAResponse, args=(args,online))
+                readingThread.daemon = True
                 readingThread.start()
 
         processPacketsOnCoprocessor(packetLen, packetBytes, args)
@@ -397,12 +406,18 @@ def readFPGAResponse(args, online=False):
 
                 packetStatus = int.from_bytes(args.fpgaOut.read(4), byteorder='little', signed=True)
 
-                #if packetStatus == 1:
-                    #Error
+                if packetStatus == 1:
+                    packetList.pop(0)
 
                 if packetStatus == 2 or packetStatus == 0:
-                    print("Packet Stored")
-                    storePacket(packetList.pop(0), args)
+                    payload = packetList.pop(0)
+                    storePacket(payload, args)
+                    print("Packet Stored: Address [{0}:{1}:{2}:{3}:{4}:{5}]".format("%02X" % payload[11],
+                                                "%02X" % payload[10],
+                                                "%02X" % payload[9],
+                                                "%02X" % payload[8],
+                                                "%02X" % payload[7],
+                                                "%02X" % payload[6]))
                     numberOfStoredPackets += 1
                     if packetStatus == 2:
                         print("Captured ATT packet %d" % nrPackets)
@@ -410,20 +425,31 @@ def readFPGAResponse(args, online=False):
                 nrPackets += 1
         else:
             while True:
-
                 packetStatus = int.from_bytes(args.fpgaOut.read(4), byteorder='little', signed=True)
 
-                #if packetStatus == 1:
-                    #Error
+                if packetStatus == 1:
+                    packetList.pop(0)
 
                 if packetStatus == 2 or packetStatus == 0:
-                    print("Packet Stored")
-                    storePacket(packetList.pop(0), args)
+                    payload = packetList.pop(0)
+                    storePacket(payload, args)
+                    print("Packet Stored: Address [{0}:{1}:{2}:{3}:{4}:{5}]".format("%02X" % payload[11],
+                                                "%02X" % payload[10],
+                                                "%02X" % payload[9],
+                                                "%02X" % payload[8],
+                                                "%02X" % payload[7],
+                                                "%02X" % payload[6]))
+
+                    if packetStatus == 2:
+                        print("Captured ATT packet %d" % nrPackets)
+                    
                     numberOfStoredPackets += 1
 
                 nrPackets += 1
         print("Filtered %d packets " % nrPackets, end="")
         #print(nrPackets) # Remove 
+    except Exception:
+        return
     finally:
         args.fpgaOut.close()
         return
@@ -451,6 +477,12 @@ def processPacketsProcessor(packetLen, packetBytes, args):
             
             numberOfStoredPackets += 1
             storePacket(packetBytes, args)
+            print("Packet Stored: Address [{0}:{1}:{2}:{3}:{4}:{5}]".format("%02X" % packetBytes[11],
+                            "%02X" % packetBytes[10],
+                            "%02X" % packetBytes[9],
+                            "%02X" % packetBytes[8],
+                            "%02X" % packetBytes[7],
+                            "%02X" % packetBytes[6]))
 
 
             return
@@ -464,6 +496,7 @@ def processPacketsOnCoprocessor(packetLen, packetBytes, args):
     for i in range(4,12):
         localList.append(packetBytes[i])
     args.fpgaIn.write(bytearray(localList))
+
     if args.threaded == False:
         packetStatus = int.from_bytes(args.fpgaOut.read(4), byteorder='little', signed=True)
         
@@ -528,8 +561,6 @@ def processOfflinePackets(args):
 
 def main():
     args = snifferParser.parse_args()
-    global executionTimeInSeconds
-    global readingThread
 
     #Interpret arguments, then switch for according usage
 
@@ -546,12 +577,9 @@ def main():
 
                 loopOnlineFilter(args)
 
-            except KeyboardInterrupt:
-
-                if args.threaded == True:
-                    readingThread.raise_exception()
-                    readingThread.join()
-
+            except Exception:
+                print("Something went wrong, aborting!")
+                exit(0)
 
         if selectedOperatingMode == OperatingMode.Offline: #Operating mode
 
@@ -562,10 +590,12 @@ def main():
             processOfflinePackets(args)
 
             if args.threaded == True:
+                global readingThread
                 readingThread.join()
 
             args.storeFile.close()
             args.loggerFile.close()
+            print("Processing time %s seconds" % executionTimeInSeconds) 
 
         if selectedOperatingMode == OperatingMode.Store: #Operating mode
             logMessage(args.loggerFile, "Program opened in store mode in file \"%s\"" % args.out)
@@ -576,19 +606,37 @@ def main():
         if selectedOperatingMode == OperatingMode.Detect: #Operating mode
 
             logMessage(args.loggerFile, "Program opened in detection mode")
-
             
-            print("Detect mode!")
+            try:
+                setup(args)  
+                while True:
+                    newDevices = scanForDevices().asList()   
+
+                    for d in newDevices:
+                        foundMacAddress = "{0}:{1}:{2}:{3}:{4}:{5}".format("%02X" % d.address[0],
+                                                    "%02X" % d.address[1],
+                                                    "%02X" % d.address[2],
+                                                    "%02X" % d.address[3],
+                                                    "%02X" % d.address[4],
+                                                    "%02X" % d.address[5]) 
+                        if foundMacAddress not in args.knownDevices:
+                            args.knownDevices[foundMacAddress] = 1   
+                            logMessage(args.loggerFile, "Detected new device %s" % foundMacAddress)              
+                            print("Detected new device %s" % foundMacAddress)
+            except KeyboardInterrupt:
+                pass
+
     else:
         print("Fatal error!")
-
     try:
-        print("Processing time %s seconds" % executionTimeInSeconds) 
+        if args.threaded == True:
+            #global readingThread
+            readingThread.stop()
+            readingThread.join()
 
     except IOError:
         input("Could not open file!")
     except Exception:
-        print("Something went wrong, aborting!")
         exit(0)
 
 if __name__ == "__main__":

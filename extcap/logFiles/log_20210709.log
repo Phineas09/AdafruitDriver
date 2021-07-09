@@ -1,0 +1,36 @@
+07:54:52:09/07/2021 Program opened in online mode
+07:55:07:09/07/2021 Program opened in online mode
+07:55:27:09/07/2021 Program opened in detection mode
+07:55:36:09/07/2021 Program opened in detection mode
+07:57:07:09/07/2021 Program opened in detection mode
+07:58:48:09/07/2021 Program opened in detection mode
+08:05:17:09/07/2021 Program opened in detection mode
+08:05:35:09/07/2021 Program opened in detection mode
+08:08:12:09/07/2021 Program opened in detection mode
+08:08:12:09/07/2021 Initializing device /dev/ttyUSB0
+08:08:12:09/07/2021 Scanning for BLE devices (5s) ...
+08:08:55:09/07/2021 Program opened in detection mode
+08:08:55:09/07/2021 Initializing device /dev/ttyUSB0
+08:08:55:09/07/2021 Scanning for BLE devices (5s) ...
+08:10:24:09/07/2021 Program opened in detection mode
+08:10:24:09/07/2021 Initializing device /dev/ttyUSB0
+08:10:24:09/07/2021 Scanning for BLE devices (5s) ...
+08:10:42:09/07/2021 Program opened in detection mode
+08:10:42:09/07/2021 Initializing device /dev/ttyUSB0
+08:10:42:09/07/2021 Scanning for BLE devices (5s) ...
+08:10:52:09/07/2021 Detected new device 4D:B2:32:CB:80:B4
+08:10:52:09/07/2021 Detected new device 1F:6D:23:2A:38:10
+08:10:52:09/07/2021 Detected new device 3A:99:16:42:6D:32
+08:10:52:09/07/2021 Detected new device 51:62:0E:0F:98:E1
+08:10:52:09/07/2021 Detected new device 35:BF:0A:E9:ED:19
+08:10:52:09/07/2021 Detected new device D5:AB:8A:CF:B1:D8
+08:10:52:09/07/2021 Detected new device 5D:EA:E2:01:CE:15
+08:10:52:09/07/2021 Detected new device 43:14:26:3A:69:7A
+08:10:52:09/07/2021 Detected new device 44:82:70:B9:B3:1A
+08:10:52:09/07/2021 Detected new device D9:BE:75:1D:26:A8
+08:10:52:09/07/2021 Detected new device E4:19:C1:BB:88:A4
+08:11:12:09/07/2021 Detected new device 6D:A1:3B:B4:75:6D
+08:11:32:09/07/2021 Detected new device 0F:F2:64:A8:82:BE
+08:11:37:09/07/2021 Detected new device 7B:F9:C0:81:CD:F0
+08:13:03:09/07/2021 Detected new device 74:E4:80:B6:55:07
+08:14:28:09/07/2021 Detected new device 42:32:86:72:31:65
