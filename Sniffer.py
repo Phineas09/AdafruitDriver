@@ -7,9 +7,12 @@ import threading
 from datetime import datetime
 
 
-# Example of usages
-# sudo python3 testArguments.py -offline -mac d9:be:75:1d:26:a8 -inFile ./utils/test100.sniff -logFile ./logFiles/test.log
+'''
+python3 Sniffer.py -captureFile test --FPGA --threaded
+python3 Sniffer.py -offline -mac d9:be:75:1d:26:a8 -inFile ./utils/test100.sniff -n 100 --FPGA --threaded
+python3 Sniffer.py -detect
 
+'''
 
 from SnifferAPI import Sniffer, UART
 
@@ -624,7 +627,7 @@ def main():
                             logMessage(args.loggerFile, "Detected new device %s" % foundMacAddress)              
                             print("Detected new device %s" % foundMacAddress)
             except KeyboardInterrupt:
-                pass
+                print("Keyboard Interrupted")
 
     else:
         print("Fatal error!")
